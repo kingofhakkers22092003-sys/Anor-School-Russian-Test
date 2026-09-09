@@ -1,0 +1,96 @@
+[
+  {
+    "id": "db5baa9d-0ffb-4352-819c-56fbacd14d55",
+    "fullName": "aziz",
+    "schoolClass": "8A",
+    "password": "aziz",
+    "results": {},
+    "attempts": [
+      {
+        "id": "2026-09-07T09:02:45.918Z",
+        "completedAt": "2026-09-07T09:02:45.918Z",
+        "results": {
+          "Grammatika": {
+            "score": 2,
+            "total": 4,
+            "note": "",
+            "pending": false,
+            "completedAt": "2026-09-07T09:02:05.143Z"
+          },
+          "Tinglash": {
+            "score": 2,
+            "total": 3,
+            "note": "",
+            "pending": false,
+            "completedAt": "2026-09-07T09:02:21.812Z"
+          },
+          "O‘qish": {
+            "score": 1,
+            "total": 3,
+            "note": "",
+            "pending": false,
+            "completedAt": "2026-09-07T09:02:28.731Z"
+          },
+          "Yozish": {
+            "score": 4,
+            "total": 10,
+            "note": "",
+            "pending": false,
+            "completedAt": "2026-09-07T09:02:36.232Z"
+          },
+          "Gapirish": {
+            "score": 4,
+            "total": 10,
+            "note": "",
+            "pending": false,
+            "completedAt": "2026-09-07T09:02:45.918Z"
+          }
+        }
+      },
+      {
+        "id": "2026-09-07T09:11:42.531Z",
+        "completedAt": "2026-09-07T09:11:42.531Z",
+        "results": {
+          "Grammatika": {
+            "score": 3,
+            "total": 4,
+            "note": "",
+            "pending": false,
+            "completedAt": "2026-09-07T09:11:11.627Z"
+          },
+          "Tinglash": {
+            "score": 2,
+            "total": 3,
+            "note": "",
+            "pending": false,
+            "completedAt": "2026-09-07T09:11:19.377Z"
+          },
+          "O‘qish": {
+            "score": 1,
+            "total": 3,
+            "note": "",
+            "pending": false,
+            "completedAt": "2026-09-07T09:11:26.551Z"
+          },
+          "Yozish": {
+            "score": 5,
+            "total": 10,
+            "note": "",
+            "pending": false,
+            "completedAt": "2026-09-07T09:11:35.114Z"
+          },
+          "Gapirish": {
+            "score": 4,
+            "total": 10,
+            "note": "",
+            "pending": false,
+            "completedAt": "2026-09-07T09:11:42.531Z"
+          }
+        }
+      }
+    ],
+    "pendingReview": {},
+    "telegramSent": false,
+    "telegramError": null
+  }
+]

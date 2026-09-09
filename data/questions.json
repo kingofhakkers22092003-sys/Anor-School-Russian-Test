@@ -1,0 +1,131 @@
+{
+  "Grammatika": [
+    {
+      "id": "g1",
+      "prompt": "“Men o‘quvchiman” jumlasining to‘g‘ri tarjimasi qaysi?",
+      "options": [
+        "Я ученик.",
+        "Я учитель.",
+        "Я школа."
+      ],
+      "answer": "0"
+    },
+    {
+      "id": "g2",
+      "prompt": "Bo‘sh joyni to‘ldiring: Это ___ книга. (Bu chiroyli kitob.)",
+      "options": [
+        "красивый",
+        "красивая",
+        "красивое"
+      ],
+      "answer": "1"
+    },
+    {
+      "id": "g3",
+      "prompt": "“Men maktabga boraman” jumlasini toping.",
+      "options": [
+        "Я школа иду.",
+        "Я иду в школу.",
+        "Я иду школа."
+      ],
+      "answer": "1"
+    },
+    {
+      "id": "g4",
+      "prompt": "“Kitoblar” so‘zini rus tiliga tarjima qiling.",
+      "options": [
+        "книги",
+        "книга",
+        "книгам"
+      ],
+      "answer": "0"
+    }
+  ],
+  "Tinglash": [
+    {
+      "id": "l1",
+      "prompt": "Gapirayotgan bolaning ismi nima?",
+      "audioText": "Привет! Меня зовут Алишер.",
+      "options": [
+        "Alisher",
+        "Sardor",
+        "Kamola"
+      ],
+      "answer": "0"
+    },
+    {
+      "id": "l2",
+      "prompt": "Bugun haftaning qaysi kuni?",
+      "audioText": "Сегодня пятница.",
+      "options": [
+        "Dushanba",
+        "Chorshanba",
+        "Juma"
+      ],
+      "answer": "2"
+    },
+    {
+      "id": "l3",
+      "prompt": "U nimani yoqtiradi?",
+      "audioText": "Я люблю русский язык и рисовать.",
+      "options": [
+        "Rus tili va rasm chizishni",
+        "Futbol o‘ynashni",
+        "Ingliz tilini"
+      ],
+      "answer": "0"
+    }
+  ],
+  "O‘qish": [
+    {
+      "id": "r1",
+      "prompt": "“Школа” so‘zi nimani anglatadi?",
+      "options": [
+        "Oila",
+        "Do‘st",
+        "Maktab"
+      ],
+      "answer": "2"
+    },
+    {
+      "id": "r2",
+      "prompt": "“Мне 10 лет” gapining ma’nosi qaysi?",
+      "options": [
+        "Men 8 yoshdaman.",
+        "Men 10 yoshdaman.",
+        "Men 12 yoshdaman."
+      ],
+      "answer": "1"
+    },
+    {
+      "id": "r3",
+      "prompt": "Alisher nimani yaxshi ko‘radi?",
+      "options": [
+        "Rus tili va rasm chizishni",
+        "Futbol o‘ynashni",
+        "Ingliz tilini"
+      ],
+      "answer": "0"
+    }
+  ],
+  "Yozish": [
+    {
+      "id": "w1",
+      "prompt": "So‘zlardan to‘g‘ri jumla tuzing: я / студент / прилежный"
+    },
+    {
+      "id": "w2",
+      "prompt": "Rus tilida ismingiz, sinfingiz va rus tilini yoqtirasizmi yoki yo‘qligi haqida 2–3 ta sodda gap yozing."
+    },
+    {
+      "id": "w3",
+      "prompt": "“Bugun havo yaxshi.” jumlasini rus tiliga tarjima qiling."
+    }
+  ],
+  "Gapirish": [
+    {
+      "id": "s1",
+      "prompt": "O‘zingizni rus tilida tanishtiring: ismingiz, sinfingiz va rus tili haqida 2–3 ta gap ayting."
+    }
+  ]
+}
