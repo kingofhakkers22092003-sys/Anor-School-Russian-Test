@@ -40,6 +40,8 @@ function loginStudent(fullName, password) { return apiPost('/api/login', { fullN
 function getQuestionBank() { return apiGet('/api/questions'); }
 function addQuestion(section, question) { return apiPost('/api/questions', { section, ...question }); }
 function deleteQuestion(section, id) { return apiDelete(`/api/questions/${section}/${id}`); }
+function getReadingPassage() { return apiGet('/api/reading-passage'); }
+function saveReadingPassage(content, translation) { return apiPost('/api/reading-passage', { content, translation }); }
 async function gradingMode() { const data = await apiGet('/api/grading-mode'); return data.mode; }
 function setGradingMode(mode) { return apiPost('/api/grading-mode', { mode }); }
 function adminLogin(username, password) { return apiPost('/api/admin/login', { username, password }); }
@@ -359,7 +361,10 @@ async function renderDynamicTest() {
   if (['Grammatika', 'Tinglash', 'O‘qish'].includes(section)) {
     const form = document.querySelector('.choice-test'); if (!form) return;
     if (!questions.length) { form.innerHTML = noQuestionsMarkup(); return; }
-    form.innerHTML = `${questions.map((question, index) => `<div class="question" data-answer="${question.answer}"><span class="question-number">${t('SAVOL')} ${String(index + 1).padStart(2, '0')}</span>${section === 'Tinglash' ? (question.audioUrl ? `<div class="audio-player uploaded-audio"><audio controls src="${question.audioUrl}"></audio><small>${t('Audio')} ${index + 1} · ${t('kerak bo‘lsa qayta tinglashingiz mumkin.')}</small></div>` : `<div class="audio-player"><button class="play-audio" type="button" data-text="${escapeHtml(question.audioText || question.prompt)}">▶</button><small>${t('Audio')} ${index + 1} · ${t('kerak bo‘lsa qayta tinglashingiz mumkin.')}</small></div>`) : ''}<h2>${escapeHtml(t(question.prompt))}</h2><div class="options">${question.options.map((option, optionIndex) => `<label class="option"><input type="radio" name="q${index}" value="${optionIndex}">${escapeHtml(t(option))}</label>`).join('')}</div></div>`).join('')}<button class="primary-button submit-test ${section === 'Grammatika' ? 'grammar-theme' : section === 'Tinglash' ? 'listening-theme' : 'reading-theme'}" type="submit">${t('Javoblarni tekshirish →')}</button><div id="testResult" class="result-box"></div>`;
+    let passage = null;
+    if (section === 'O‘qish') { try { passage = await getReadingPassage(); } catch { /* matn mavjud bo'lmasa savollar baribir ishlaydi */ } }
+    const passageMarkup = passage?.content ? `<article class="reading-passage"><span class="question-number">${t('MATN')}</span><div class="reading-passage-content">${escapeHtml(passage.content).replace(/\n/g, '<br>')}</div>${passage.translation ? `<p class="reading-passage-translation">${escapeHtml(passage.translation).replace(/\n/g, '<br>')}</p>` : ''}</article>` : '';
+    form.innerHTML = `${passageMarkup}${questions.map((question, index) => `<div class="question" data-answer="${question.answer}"><span class="question-number">${t('SAVOL')} ${String(index + 1).padStart(2, '0')}</span>${section === 'Tinglash' ? (question.audioUrl ? `<div class="audio-player uploaded-audio"><audio controls src="${question.audioUrl}"></audio><small>${t('Audio')} ${index + 1} · ${t('kerak bo‘lsa qayta tinglashingiz mumkin.')}</small></div>` : `<div class="audio-player"><button class="play-audio" type="button" data-text="${escapeHtml(question.audioText || question.prompt)}">▶</button><small>${t('Audio')} ${index + 1} · ${t('kerak bo‘lsa qayta tinglashingiz mumkin.')}</small></div>`) : ''}<h2>${escapeHtml(t(question.prompt))}</h2><div class="options">${question.options.map((option, optionIndex) => `<label class="option"><input type="radio" name="q${index}" value="${optionIndex}">${escapeHtml(t(option))}</label>`).join('')}</div></div>`).join('')}<button class="primary-button submit-test ${section === 'Grammatika' ? 'grammar-theme' : section === 'Tinglash' ? 'listening-theme' : 'reading-theme'}" type="submit">${t('Javoblarni tekshirish →')}</button><div id="testResult" class="result-box"></div>`;
   }
   if (section === 'Yozish') {
     const form = document.querySelector('#writingForm'); if (!form) return;
@@ -373,8 +378,22 @@ async function renderDynamicTest() {
   }
 }
 
-function renderQuestionFields() {
+async function renderQuestionFields() {
   const section = document.querySelector('#questionSection')?.value; const fields = document.querySelector('#questionFields'); if (!fields) return;
+  const passageManager = document.querySelector('#readingPassageManager');
+  if (passageManager) {
+    if (section === 'O‘qish') {
+      let passage = { content: '', translation: '' };
+      try { passage = await getReadingPassage(); } catch { /* server xatosi bo'lsa bo'sh forma ko'rsatiladi */ }
+      passageManager.innerHTML = `<div class="reading-passage-manager"><p class="manager-note">${t('Bu matn o‘quvchiga barcha Reading savollaridan oldin ko‘rinadi.')}</p><label>${t('Asosiy matn')}<textarea id="readingPassageContent" rows="5" placeholder="Меня зовут Алишер…">${escapeHtml(passage.content || '')}</textarea></label><label>${t('Tarjima (ixtiyoriy)')}<textarea id="readingPassageTranslation" rows="3" placeholder="Matnning o‘zbekcha tarjimasi">${escapeHtml(passage.translation || '')}</textarea></label><button id="saveReadingPassage" class="primary-button dark-button" type="button">${t('Matnni saqlash')}</button><p id="readingPassageMessage" class="form-message" role="status"></p></div>`;
+      passageManager.querySelector('#saveReadingPassage')?.addEventListener('click', async () => {
+        const button = passageManager.querySelector('#saveReadingPassage'); const message = passageManager.querySelector('#readingPassageMessage');
+        try { button.disabled = true; await saveReadingPassage(passageManager.querySelector('#readingPassageContent').value, passageManager.querySelector('#readingPassageTranslation').value); message.textContent = t('Asosiy matn saqlandi.'); message.classList.add('success'); }
+        catch { message.textContent = t('Xatolik yuz berdi, qayta urinib ko‘ring.'); message.classList.remove('success'); }
+        finally { button.disabled = false; }
+      });
+    } else passageManager.innerHTML = '';
+  }
   const choice = ['Grammatika', 'Tinglash', 'O‘qish'].includes(section);
   fields.innerHTML = `<label>${t('Savol matni')}<textarea name="prompt" rows="3" required placeholder="${t('Savolni yozing')}"></textarea></label>${section === 'Tinglash' ? `<label>${t('Audio faylini yuklang')}<input type="file" name="audioFile" accept="audio/*" required /></label><p class="manager-note field-note">${t('MP3, WAV yoki boshqa audio format')}</p>` : ''}${choice ? `<label>${t('1-variant')}<input name="option1" required placeholder="${t('Birinchi javob')}" /></label><label>${t('2-variant')}<input name="option2" required placeholder="${t('Ikkinchi javob')}" /></label><label>${t('3-variant')}<input name="option3" required placeholder="${t('Uchinchi javob')}" /></label><label>${t('To‘g‘ri javob')}<select name="answer"><option value="0">${t('1-variant')}</option><option value="1">${t('2-variant')}</option><option value="2">${t('3-variant')}</option></select></label>` : `<p class="manager-note">${t('Bu ochiq topshiriq. O‘quvchi javobi o‘qituvchi tomonidan baholanadi.')}</p>`}`;
 }
@@ -437,8 +456,8 @@ async function setupQuestionManager() {
   }
 
   const switchView = async view => { document.querySelectorAll('.teacher-tab').forEach(button => button.classList.toggle('active', button.dataset.teacherView === view)); document.querySelector('#teacherQuestionsPanel')?.classList.toggle('hidden', view !== 'questions'); document.querySelector('#teacherResultsPanel')?.classList.toggle('hidden', view !== 'results'); document.querySelector('#teacherReviewPanel')?.classList.toggle('hidden', view !== 'review'); document.querySelector('#teacherSettingsPanel')?.classList.toggle('hidden', view !== 'settings'); if (view === 'results') await renderTeacherDashboard(); if (view === 'review') await renderReviewQueue(); };
-  renderQuestionFields(); await renderTeacherQuestions(); await setupGradingModeSwitch(); setupAdminSettingsForm();
-  sectionSelect.addEventListener('change', async () => { renderQuestionFields(); await renderTeacherQuestions(); });
+  await renderQuestionFields(); await renderTeacherQuestions(); await setupGradingModeSwitch(); setupAdminSettingsForm();
+  sectionSelect.addEventListener('change', async () => { await renderQuestionFields(); await renderTeacherQuestions(); });
   form.addEventListener('submit', async event => {
     event.preventDefault();
     const formData = new FormData(form);
@@ -456,7 +475,7 @@ async function setupQuestionManager() {
       }
       await addQuestion(data.section, question);
       form.reset(); sectionSelect.value = data.section;
-      renderQuestionFields(); await renderTeacherQuestions();
+      await renderQuestionFields(); await renderTeacherQuestions();
     } catch { alert(t('Xatolik yuz berdi, qayta urinib ko‘ring.')); }
     finally { if (submitButton) submitButton.disabled = false; }
   });

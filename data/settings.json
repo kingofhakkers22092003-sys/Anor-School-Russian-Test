@@ -1,5 +1,9 @@
 {
   "gradingMode": "teacher",
   "adminUsername": "admin",
-  "adminPassword": "admin"
+  "adminPassword": "admin",
+  "readingPassage": {
+    "content": "Меня зовут Алишер, мне десять лет. Я учусь в школе Анор. Я люблю русский язык и рисование.",
+    "translation": ""
+  }
 }
