@@ -7,6 +7,8 @@ const FormData = require('form-data');
 const fetch = require('node-fetch');
 const OpenAI = require('openai');
 const crypto = require('crypto');
+const db = require('./supabase'); // <-- Endi barcha doimiy ma'lumotlar (o'quvchilar, savollar,
+                                   //     sozlamalar) shu modul orqali Supabase'da saqlanadi.
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,127 +17,79 @@ if (!process.env.OPENAI_API_KEY) {
   console.warn('DIQQAT: .env faylida OPENAI_API_KEY topilmadi. AI baholash ishlamaydi (talabalar javobi "o\'qituvchi tekshiradi" holatida qoladi).');
 }
 
-// API kaliti bo'lmasa ham qolgan funksiyalar (ro'yxatdan o'tish, savollar,
-// ustoz tekshiruvi va Telegram) ishlashi kerak. AI baholash so'rovlari esa
-// mavjud catch blokiga tushib, ustoz tekshiruviga qaytadi.
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
 // Audio javoblar base64 shaklida JSON orqali yuborilgani uchun limit kattaroq qilindi.
 app.use(express.json({ limit: '30mb' }));
 app.use(express.static(path.join(__dirname)));
 
+// Bu papka faqat Gapirish (Whisper) uchun VAQTINCHALIK audio faylni saqlaydi va darhol
+// o'chiriladi — talabalar ma'lumoti bu yerda SAQLANMAYDI, shuning uchun Supabase'ga
+// ko'chirilmaydi.
 const uploadDir = path.join(__dirname, 'tmp_uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 const upload = multer({ dest: uploadDir, limits: { fileSize: 20 * 1024 * 1024 } });
 
-// ================= UMUMIY MA'LUMOTLAR BAZASI (barcha kompyuterlar uchun) =================
-// Bu bo'lim barcha ulangan qurilmalarning bir xil ma'lumotni (o'quvchilar, savollar,
-// baholash rejimi) ko'rishi uchun kerak. Ma'lumotlar shu papkadagi data/store.json
-// faylida saqlanadi (localStorage o'rniga), shuning uchun qaysi kompyuterdan kirilmasin
-// natijalar bitta joyda jamlanadi.
-
-const dataDir = path.join(__dirname, 'data');
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
-// Ma'lumotlar endi uch alohida faylda saqlanadi, shunda har birini alohida
-// ko'rish/zaxira olish oson bo'ladi:
-//  - students.json   -> o'quvchilarning ro'yxatdan o'tgan ma'lumotlari va natijalari
-//  - questions.json  -> savollar banki (barcha bo'limlar uchun)
-//  - settings.json   -> umumiy sozlamalar (masalan, baholash rejimi)
-const STUDENTS_FILE = path.join(dataDir, 'students.json');
-const QUESTIONS_FILE = path.join(dataDir, 'questions.json');
-const SETTINGS_FILE = path.join(dataDir, 'settings.json');
-const LEGACY_DB_FILE = path.join(dataDir, 'store.json'); // eski (bitta fayl) format - faqat bir martalik migratsiya uchun
-
 const TEST_KEYS = ['Grammatika', 'Tinglash', 'O\u2018qish', 'Yozish', 'Gapirish'];
 
+// Birinchi marta ishga tushirilganda savollar banki bo'sh bo'lsa, shu standart savollar
+// bilan to'ldiriladi (avval mahalliy faylda bo'lgani kabi). Faqat BIR MARTA amalga oshadi —
+// `settings.questionsSeeded` belgisi orqali kuzatiladi, shunda o'qituvchi keyinchalik barcha
+// savollarni ataylab o'chirib tashlasa, ular qayta avtomatik qo'shilib qolmaydi.
 const DEFAULT_QUESTIONS = {
   Grammatika: [
-    { id: 'g1', prompt: '“Men o‘quvchiman” jumlasining to‘g‘ri tarjimasi qaysi?', options: ['Я ученик.', 'Я учитель.', 'Я школа.'], answer: '0' },
-    { id: 'g2', prompt: 'Bo‘sh joyni to‘ldiring: Это ___ книга. (Bu chiroyli kitob.)', options: ['красивый', 'красивая', 'красивое'], answer: '1' },
-    { id: 'g3', prompt: '“Men maktabga boraman” jumlasini toping.', options: ['Я школа иду.', 'Я иду в школу.', 'Я иду школа.'], answer: '1' },
-    { id: 'g4', prompt: '“Kitoblar” so‘zini rus tiliga tarjima qiling.', options: ['книги', 'книга', 'книгам'], answer: '0' },
+    { id: 'g1', prompt: '\u201cMen o\u2018quvchiman\u201d jumlasining to\u2018g\u2018ri tarjimasi qaysi?', options: ['\u042f \u0443\u0447\u0435\u043d\u0438\u043a.', '\u042f \u0443\u0447\u0438\u0442\u0435\u043b\u044c.', '\u042f \u0448\u043a\u043e\u043b\u0430.'], answer: '0' },
+    { id: 'g2', prompt: 'Bo\u2018sh joyni to\u2018ldiring: \u042d\u0442\u043e ___ \u043a\u043d\u0438\u0433\u0430. (Bu chiroyli kitob.)', options: ['\u043a\u0440\u0430\u0441\u0438\u0432\u044b\u0439', '\u043a\u0440\u0430\u0441\u0438\u0432\u0430\u044f', '\u043a\u0440\u0430\u0441\u0438\u0432\u043e\u0435'], answer: '1' },
+    { id: 'g3', prompt: '\u201cMen maktabga boraman\u201d jumlasini toping.', options: ['\u042f \u0448\u043a\u043e\u043b\u0430 \u0438\u0434\u0443.', '\u042f \u0438\u0434\u0443 \u0432 \u0448\u043a\u043e\u043b\u0443.', '\u042f \u0438\u0434\u0443 \u0448\u043a\u043e\u043b\u0430.'], answer: '1' },
+    { id: 'g4', prompt: '\u201cKitoblar\u201d so\u2018zini rus tiliga tarjima qiling.', options: ['\u043a\u043d\u0438\u0433\u0438', '\u043a\u043d\u0438\u0433\u0430', '\u043a\u043d\u0438\u0433\u0430\u043c'], answer: '0' },
   ],
   Tinglash: [
-    { id: 'l1', prompt: 'Gapirayotgan bolaning ismi nima?', audioText: 'Привет! Меня зовут Алишер.', options: ['Alisher', 'Sardor', 'Kamola'], answer: '0' },
-    { id: 'l2', prompt: 'Bugun haftaning qaysi kuni?', audioText: 'Сегодня пятница.', options: ['Dushanba', 'Chorshanba', 'Juma'], answer: '2' },
-    { id: 'l3', prompt: 'U nimani yoqtiradi?', audioText: 'Я люблю русский язык и рисовать.', options: ['Rus tili va rasm chizishni', 'Futbol o‘ynashni', 'Ingliz tilini'], answer: '0' },
+    { id: 'l1', prompt: 'Gapirayotgan bolaning ismi nima?', audioText: '\u041f\u0440\u0438\u0432\u0435\u0442! \u041c\u0435\u043d\u044f \u0437\u043e\u0432\u0443\u0442 \u0410\u043b\u0438\u0448\u0435\u0440.', options: ['Alisher', 'Sardor', 'Kamola'], answer: '0' },
+    { id: 'l2', prompt: 'Bugun haftaning qaysi kuni?', audioText: '\u0421\u0435\u0433\u043e\u0434\u043d\u044f \u043f\u044f\u0442\u043d\u0438\u0446\u0430.', options: ['Dushanba', 'Chorshanba', 'Juma'], answer: '2' },
+    { id: 'l3', prompt: 'U nimani yoqtiradi?', audioText: '\u042f \u043b\u044e\u0431\u043b\u044e \u0440\u0443\u0441\u0441\u043a\u0438\u0439 \u044f\u0437\u044b\u043a \u0438 \u0440\u0438\u0441\u043e\u0432\u0430\u0442\u044c.', options: ['Rus tili va rasm chizishni', 'Futbol o\u2018ynashni', 'Ingliz tilini'], answer: '0' },
   ],
   'O\u2018qish': [
-    { id: 'r1', prompt: '“Школа” so‘zi nimani anglatadi?', options: ['Oila', 'Do‘st', 'Maktab'], answer: '2' },
-    { id: 'r2', prompt: '“Мне 10 лет” gapining ma’nosi qaysi?', options: ['Men 8 yoshdaman.', 'Men 10 yoshdaman.', 'Men 12 yoshdaman.'], answer: '1' },
-    { id: 'r3', prompt: 'Alisher nimani yaxshi ko‘radi?', options: ['Rus tili va rasm chizishni', 'Futbol o‘ynashni', 'Ingliz tilini'], answer: '0' },
+    { id: 'r1', prompt: '\u201c\u0428\u043a\u043e\u043b\u0430\u201d so\u2018zi nimani anglatadi?', options: ['Oila', 'Do\u2018st', 'Maktab'], answer: '2' },
+    { id: 'r2', prompt: '\u201c\u041c\u043d\u0435 10 \u043b\u0435\u0442\u201d gapining ma\u2019nosi qaysi?', options: ['Men 8 yoshdaman.', 'Men 10 yoshdaman.', 'Men 12 yoshdaman.'], answer: '1' },
+    { id: 'r3', prompt: 'Alisher nimani yaxshi ko\u2018radi?', options: ['Rus tili va rasm chizishni', 'Futbol o\u2018ynashni', 'Ingliz tilini'], answer: '0' },
   ],
   Yozish: [
-    { id: 'w1', prompt: 'So‘zlardan to‘g‘ri jumla tuzing: я / студент / прилежный' },
-    { id: 'w2', prompt: 'Rus tilida ismingiz, sinfingiz va rus tilini yoqtirasizmi yoki yo‘qligi haqida 2–3 ta sodda gap yozing.' },
-    { id: 'w3', prompt: '“Bugun havo yaxshi.” jumlasini rus tiliga tarjima qiling.' },
+    { id: 'w1', prompt: 'So\u2018zlardan to\u2018g\u2018ri jumla tuzing: \u044f / \u0441\u0442\u0443\u0434\u0435\u043d\u0442 / \u043f\u0440\u0438\u043b\u0435\u0436\u043d\u044b\u0439' },
+    { id: 'w2', prompt: 'Rus tilida ismingiz, sinfingiz va rus tilini yoqtirasizmi yoki yo\u2018qligi haqida 2\u20133 ta sodda gap yozing.' },
+    { id: 'w3', prompt: '\u201cBugun havo yaxshi.\u201d jumlasini rus tiliga tarjima qiling.' },
   ],
   Gapirish: [
-    { id: 's1', prompt: 'O‘zingizni rus tilida tanishtiring: ismingiz, sinfingiz va rus tili haqida 2–3 ta gap ayting.' },
+    { id: 's1', prompt: 'O\u2018zingizni rus tilida tanishtiring: ismingiz, sinfingiz va rus tili haqida 2\u20133 ta gap ayting.' },
   ],
 };
 
-function readJsonFile(file, fallback) {
-  if (!fs.existsSync(file)) return null;
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+const DEFAULT_SETTINGS = {
+  gradingMode: 'teacher',
+  adminUsername: 'admin',
+  adminPassword: 'admin',
+  readingPassage: { content: '', translation: '' },
+  questionsSeeded: false,
+};
+
+async function getSettings() {
+  return db.getSettings(DEFAULT_SETTINGS);
+}
+async function updateSettings(patch) {
+  const current = await getSettings();
+  const updated = { ...current, ...patch };
+  await db.saveSettings(updated);
+  return updated;
 }
 
-function loadDb() {
-  let students = readJsonFile(STUDENTS_FILE);
-  let questionBank = readJsonFile(QUESTIONS_FILE);
-  let settings = readJsonFile(SETTINGS_FILE);
-
-  // Eski bitta-fayllik (data/store.json) formatdan bir martalik migratsiya:
-  // agar yangi fayllar hali mavjud bo'lmasa va eski fayl bo'lsa, undan o'qib olamiz.
-  if ((!students || !questionBank || !settings) && fs.existsSync(LEGACY_DB_FILE)) {
-    const legacy = readJsonFile(LEGACY_DB_FILE) || {};
-    if (!students) students = legacy.students || [];
-    if (!questionBank) questionBank = legacy.questionBank || null;
-    if (!settings) settings = { gradingMode: legacy.gradingMode || 'teacher' };
+async function ensureQuestionsSeeded() {
+  const settings = await getSettings();
+  if (settings.questionsSeeded) return;
+  for (const section of TEST_KEYS) {
+    for (const question of DEFAULT_QUESTIONS[section] || []) {
+      await db.addQuestion(question, section);
+    }
   }
-
-  if (!students) students = [];
-  if (!questionBank) questionBank = JSON.parse(JSON.stringify(DEFAULT_QUESTIONS));
-  if (!settings) settings = { gradingMode: 'teacher' };
-
-  // Eski o'quvchi yozuvlarida yangi maydonlar bo'lmasligi mumkin - xavfsiz standart qiymat beramiz.
-  students.forEach(student => {
-    if (typeof student.telegramSent !== 'boolean') student.telegramSent = false;
-    if (student.telegramError === undefined) student.telegramError = null;
-    student.pendingReview = student.pendingReview || {};
-    student.attempts = student.attempts || [];
-    student.results = student.results || {};
-  });
-
-  // Admin login va parol endi fayl orqali saqlanadi (standart: admin / admin), shunda
-  // o'qituvchi buni dashboarddan o'zgartirishi mumkin bo'ladi.
-  const db = {
-    students,
-    questionBank,
-    gradingMode: settings.gradingMode || 'teacher',
-    adminUsername: settings.adminUsername || 'admin',
-    adminPassword: settings.adminPassword || 'admin',
-    readingPassage: settings.readingPassage || { content: '', translation: '' },
-  };
-  saveDb(db); // fayllar hali mavjud bo'lmasa (yoki migratsiyadan keyin) darhol yozib qo'yamiz
-  return db;
-}
-function saveDb(db) {
-  fs.writeFileSync(STUDENTS_FILE, JSON.stringify(db.students, null, 2));
-  fs.writeFileSync(QUESTIONS_FILE, JSON.stringify(db.questionBank, null, 2));
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ gradingMode: db.gradingMode, adminUsername: db.adminUsername, adminPassword: db.adminPassword, readingPassage: db.readingPassage }, null, 2));
-}
-
-// Bir vaqtda bir nechta kompyuterdan so'rov kelganda faylga yozish ustma-ust
-// tushib ketmasligi uchun barcha o'zgartirishlar shu navbat orqali ketma-ket bajariladi.
-let dbQueue = Promise.resolve();
-function withDb(fn) {
-  const run = dbQueue.then(() => {
-    const db = loadDb();
-    return fn(db);
-  });
-  dbQueue = run.then(() => {}, () => {});
-  return run;
+  await updateSettings({ questionsSeeded: true });
 }
 
 function sanitizeStudent(student) {
@@ -155,16 +109,11 @@ function maybeArchiveAttempt(student) {
   return student;
 }
 
-function findStudent(db, id) {
-  return db.students.find(item => item.id === id);
-}
-
 function isFullyGraded(student) {
   return TEST_KEYS.every(key => student.results && student.results[key] && !student.results[key].pending);
 }
 
 // ---------- Natija PDF'ini serverda tayyorlash (Telegramga avtomatik yuborish uchun) ----------
-// Bu funksiya brauzerdagi makePdf() bilan bir xil ishlaydi, faqat natija Blob emas, Buffer bo'ladi.
 function pdfSafe(value) {
   return String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[\u2018\u2019]/g, "'").replace(/[^\x20-\x7E]/g, '?').replace(/[\\()]/g, '\\$&');
 }
@@ -217,11 +166,6 @@ async function sendTelegramDocument(buffer, filename, caption) {
   if (!data.ok) throw new Error(data.description || 'Telegram xatosi.');
 }
 
-// Barcha 5 bo'lim ustoz/AI tomonidan tasdiqlangach, natija PDF avtomatik ravishda
-// Telegram guruhga yuboriladi. Muvaffaqiyatli yuborilgach `telegramSent` true bo'ladi,
-// va faqat shundan keyin o'quvchi profilidagi natijalar oynasini yopish (reset) mumkin bo'ladi.
-// Agar yuborishda xatolik bo'lsa (masalan internet yo'q), keyingi safar shu o'quvchining
-// ma'lumoti so'ralganda (dashboard yangilanganda) avtomatik qayta urinib ko'riladi.
 async function finalizeIfComplete(student) {
   if (!isFullyGraded(student)) return;
   if (student.telegramSent) return;
@@ -239,35 +183,42 @@ async function finalizeIfComplete(student) {
 }
 
 // ---------- O'quvchilar: ro'yxatdan o'tish / kirish / ro'yxat ----------
-app.get('/api/students', (req, res) => {
-  withDb(db => db.students.map(sanitizeStudent))
-    .then(list => res.json(list))
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+app.get('/api/students', async (req, res) => {
+  try {
+    const students = await db.getStudents();
+    res.json(students.map(sanitizeStudent));
+  } catch (err) {
+    console.error('GET /api/students error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
-app.get('/api/students/:id', (req, res) => {
-  withDb(async db => {
-    const student = findStudent(db, req.params.id);
-    if (!student) return null;
+app.get('/api/students/:id', async (req, res) => {
+  try {
+    const student = await db.getStudent(req.params.id);
+    if (!student) return res.status(404).json({ error: 'not-found' });
     maybeArchiveAttempt(student);
     await finalizeIfComplete(student);
-    saveDb(db);
-    return sanitizeStudent(student);
-  })
-    .then(student => {
-      if (!student) return res.status(404).json({ error: 'not-found' });
-      res.json(student);
-    })
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+    await db.saveStudent(student);
+    res.json(sanitizeStudent(student));
+  } catch (err) {
+    console.error('GET /api/students/:id error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
-app.post('/api/register', (req, res) => {
+app.post('/api/register', async (req, res) => {
   const { fullName, schoolClass, password } = req.body || {};
   if (!fullName || !schoolClass || !password) return res.status(400).json({ error: 'invalid' });
-  withDb(db => {
-    if (fullName.trim().toLowerCase() === db.adminUsername.toLowerCase()) return { error: 'admin-reserved' };
-    const exists = db.students.some(item => item.fullName.toLowerCase() === fullName.trim().toLowerCase() && item.schoolClass === schoolClass);
-    if (exists) return { error: 'duplicate' };
+  try {
+    const settings = await getSettings();
+    if (fullName.trim().toLowerCase() === settings.adminUsername.toLowerCase()) {
+      return res.status(400).json({ error: 'admin-reserved' });
+    }
+    const students = await db.getStudents();
+    const exists = students.some(item => item.fullName.toLowerCase() === fullName.trim().toLowerCase() && item.schoolClass === schoolClass);
+    if (exists) return res.status(409).json({ error: 'duplicate' });
+
     const student = {
       id: crypto.randomUUID(),
       fullName: fullName.trim(),
@@ -279,248 +230,246 @@ app.post('/api/register', (req, res) => {
       telegramSent: false,
       telegramError: null,
     };
-    db.students.push(student);
-    saveDb(db);
-    return { student: sanitizeStudent(student) };
-  })
-    .then(result => {
-      if (result.error === 'admin-reserved') return res.status(400).json({ error: 'admin-reserved' });
-      if (result.error === 'duplicate') return res.status(409).json({ error: 'duplicate' });
-      res.json(result.student);
-    })
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+    await db.saveStudent(student);
+    res.json(sanitizeStudent(student));
+  } catch (err) {
+    console.error('POST /api/register error:', err.message);
+    // Bir vaqtda ikkita so'rov kelib qolsa, Supabase'dagi unikal indeks
+    // (full_name + school_class) shu yerda ishga tushishi mumkin.
+    if (String(err.message || '').includes('duplicate')) return res.status(409).json({ error: 'duplicate' });
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   const { fullName, password } = req.body || {};
   if (!fullName || !password) return res.status(400).json({ error: 'invalid' });
-  withDb(db => db.students.find(item => item.fullName.toLowerCase() === fullName.trim().toLowerCase() && item.password === password))
-    .then(student => {
-      if (!student) return res.status(401).json({ error: 'invalid-credentials' });
-      res.json(sanitizeStudent(student));
-    })
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+  try {
+    const students = await db.getStudents();
+    const student = students.find(item => item.fullName.toLowerCase() === fullName.trim().toLowerCase() && item.password === password);
+    if (!student) return res.status(401).json({ error: 'invalid-credentials' });
+    res.json(sanitizeStudent(student));
+  } catch (err) {
+    console.error('POST /api/login error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
-app.post('/api/students/:id/result', (req, res) => {
+app.post('/api/students/:id/result', async (req, res) => {
   const { section, score, total, note } = req.body || {};
   if (!section) return res.status(400).json({ error: 'invalid' });
-  withDb(async db => {
-    const student = findStudent(db, req.params.id);
-    if (!student) return null;
+  try {
+    const student = await db.getStudent(req.params.id);
+    if (!student) return res.status(404).json({ error: 'not-found' });
     student.results = { ...(student.results || {}), [section]: { score, total, note: note || '', pending: false, completedAt: new Date().toISOString() } };
     if (student.pendingReview?.[section]) { const rest = { ...student.pendingReview }; delete rest[section]; student.pendingReview = rest; }
     maybeArchiveAttempt(student);
     await finalizeIfComplete(student);
-    saveDb(db);
-    return sanitizeStudent(student);
-  })
-    .then(student => {
-      if (!student) return res.status(404).json({ error: 'not-found' });
-      res.json(student);
-    })
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+    await db.saveStudent(student);
+    res.json(sanitizeStudent(student));
+  } catch (err) {
+    console.error('POST /api/students/:id/result error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
-app.post('/api/students/:id/pending', (req, res) => {
+app.post('/api/students/:id/pending', async (req, res) => {
   const { section, total, content } = req.body || {};
   if (!section) return res.status(400).json({ error: 'invalid' });
-  withDb(db => {
-    const student = findStudent(db, req.params.id);
-    if (!student) return null;
+  try {
+    const student = await db.getStudent(req.params.id);
+    if (!student) return res.status(404).json({ error: 'not-found' });
     student.results = { ...(student.results || {}), [section]: { score: null, total, note: '', pending: true, completedAt: new Date().toISOString() } };
     student.pendingReview = { ...(student.pendingReview || {}), [section]: content };
-    saveDb(db);
-    return sanitizeStudent(student);
-  })
-    .then(student => {
-      if (!student) return res.status(404).json({ error: 'not-found' });
-      res.json(student);
-    })
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+    await db.saveStudent(student);
+    res.json(sanitizeStudent(student));
+  } catch (err) {
+    console.error('POST /api/students/:id/pending error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
-app.post('/api/students/:id/grade', (req, res) => {
+app.post('/api/students/:id/grade', async (req, res) => {
   const { section, score, total, comment } = req.body || {};
   if (!section) return res.status(400).json({ error: 'invalid' });
-  withDb(async db => {
-    const student = findStudent(db, req.params.id);
-    if (!student) return null;
+  try {
+    const student = await db.getStudent(req.params.id);
+    if (!student) return res.status(404).json({ error: 'not-found' });
     const previous = student.results?.[section];
     student.results = { ...(student.results || {}), [section]: { score, total, note: comment || '', pending: false, completedAt: previous?.completedAt || new Date().toISOString() } };
     if (student.pendingReview?.[section]) { const rest = { ...student.pendingReview }; delete rest[section]; student.pendingReview = rest; }
     maybeArchiveAttempt(student);
     await finalizeIfComplete(student);
-    saveDb(db);
-    return sanitizeStudent(student);
-  })
-    .then(student => {
-      if (!student) return res.status(404).json({ error: 'not-found' });
-      res.json(student);
-    })
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+    await db.saveStudent(student);
+    res.json(sanitizeStudent(student));
+  } catch (err) {
+    console.error('POST /api/students/:id/grade error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
-app.post('/api/students/:id/reset', (req, res) => {
-  withDb(async db => {
-    const student = findStudent(db, req.params.id);
-    if (!student) return { error: 'not-found' };
-    // Ustoz hali tekshirmagan yoki natija Telegram guruhga hali yuborilmagan bo'lsa,
-    // natijalar oynasini yopish (va yangi urinishni boshlash) mumkin emas.
+app.post('/api/students/:id/reset', async (req, res) => {
+  try {
+    const student = await db.getStudent(req.params.id);
+    if (!student) return res.status(404).json({ error: 'not-found' });
     await finalizeIfComplete(student); // oxirgi imkoniyat sifatida yana bir bor urinib ko'ramiz
     if (!isFullyGraded(student) || !student.telegramSent) {
-      saveDb(db);
-      return { error: 'not-ready' };
+      await db.saveStudent(student);
+      return res.status(400).json({ error: 'not-ready' });
     }
     student.results = {};
     student.pendingReview = {};
     student.telegramSent = false;
     student.telegramError = null;
-    saveDb(db);
-    return { student: sanitizeStudent(student) };
-  })
-    .then(result => {
-      if (result.error === 'not-found') return res.status(404).json({ error: 'not-found' });
-      if (result.error === 'not-ready') return res.status(400).json({ error: 'not-ready' });
-      res.json(result.student);
-    })
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+    await db.saveStudent(student);
+    res.json(sanitizeStudent(student));
+  } catch (err) {
+    console.error('POST /api/students/:id/reset error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
 // ---------- Savollar banki ----------
-app.get('/api/questions', (req, res) => {
-  withDb(db => db.questionBank)
-    .then(bank => res.json(bank))
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+app.get('/api/questions', async (req, res) => {
+  try {
+    await ensureQuestionsSeeded();
+    const bank = await db.getQuestionBank(TEST_KEYS);
+    res.json(bank);
+  } catch (err) {
+    console.error('GET /api/questions error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
-app.post('/api/questions', (req, res) => {
+app.post('/api/questions', async (req, res) => {
   const { section, grade, prompt, audioText, audioUrl, options, answer } = req.body || {};
   const normalizedGrade = Number(grade);
   if (!section || !prompt || !Number.isInteger(normalizedGrade) || normalizedGrade < 1 || normalizedGrade > 11) return res.status(400).json({ error: 'invalid' });
-  withDb(db => {
-    if (!db.questionBank[section] || !Array.isArray(db.questionBank[section])) db.questionBank[section] = [];
+  try {
     const question = { id: crypto.randomUUID(), grade: normalizedGrade, prompt };
     if (options) question.options = options;
     if (answer !== undefined) question.answer = answer;
-    // Tinglash uchun: o'qituvchi audio faylini yuklaydi (audioUrl, base64 data-url sifatida
-    // saqlanadi). Eski savollar hali ham audioText (matndan sun'iy talaffuz) bilan ishlaydi.
     if (audioUrl) question.audioUrl = audioUrl;
     else if (audioText) question.audioText = audioText;
-    db.questionBank[section].push(question);
-    saveDb(db);
-    return db.questionBank;
-  })
-    .then(bank => res.json(bank))
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+    await db.addQuestion(question, section);
+    const bank = await db.getQuestionBank(TEST_KEYS);
+    res.json(bank);
+  } catch (err) {
+    console.error('POST /api/questions error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
-app.patch('/api/questions/:section/:id', (req, res) => {
+app.patch('/api/questions/:section/:id', async (req, res) => {
   const normalizedGrade = Number(req.body?.grade);
   if (!Number.isInteger(normalizedGrade) || normalizedGrade < 1 || normalizedGrade > 11) return res.status(400).json({ error: 'invalid' });
-  withDb(db => {
-    const question = (db.questionBank[req.params.section] || []).find(item => item.id === req.params.id);
-    if (!question) return null;
-    question.grade = normalizedGrade;
-    saveDb(db);
-    return db.questionBank;
-  })
-    .then(bank => bank ? res.json(bank) : res.status(404).json({ error: 'not-found' }))
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+  try {
+    await db.updateQuestionGrade(req.params.id, normalizedGrade);
+    const bank = await db.getQuestionBank(TEST_KEYS);
+    res.json(bank);
+  } catch (err) {
+    console.error('PATCH /api/questions error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
-app.delete('/api/questions/:section/:id', (req, res) => {
-  withDb(db => {
-    const section = req.params.section;
-    db.questionBank[section] = (db.questionBank[section] || []).filter(question => question.id !== req.params.id);
-    saveDb(db);
-    return db.questionBank;
-  })
-    .then(bank => res.json(bank))
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+app.delete('/api/questions/:section/:id', async (req, res) => {
+  try {
+    await db.removeQuestion(req.params.id);
+    const bank = await db.getQuestionBank(TEST_KEYS);
+    res.json(bank);
+  } catch (err) {
+    console.error('DELETE /api/questions error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
-app.get('/api/reading-passage', (req, res) => {
-  withDb(db => db.readingPassage || { content: '', translation: '' })
-    .then(passage => res.json(passage))
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+app.get('/api/reading-passage', async (req, res) => {
+  try {
+    const settings = await getSettings();
+    res.json(settings.readingPassage || { content: '', translation: '' });
+  } catch (err) {
+    console.error('GET /api/reading-passage error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
-app.post('/api/reading-passage', (req, res) => {
+app.post('/api/reading-passage', async (req, res) => {
   const { content, translation } = req.body || {};
   if (typeof content !== 'string' || typeof translation !== 'string') return res.status(400).json({ error: 'invalid' });
-  withDb(db => {
-    db.readingPassage = { content: content.trim(), translation: translation.trim() };
-    saveDb(db);
-    return db.readingPassage;
-  })
-    .then(passage => res.json(passage))
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+  try {
+    const settings = await updateSettings({ readingPassage: { content: content.trim(), translation: translation.trim() } });
+    res.json(settings.readingPassage);
+  } catch (err) {
+    console.error('POST /api/reading-passage error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
 // ---------- Baholash rejimi (AI / Ustoz) ----------
-app.get('/api/grading-mode', (req, res) => {
-  withDb(db => db.gradingMode)
-    .then(mode => res.json({ mode }))
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+app.get('/api/grading-mode', async (req, res) => {
+  try {
+    const settings = await getSettings();
+    res.json({ mode: settings.gradingMode });
+  } catch (err) {
+    console.error('GET /api/grading-mode error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
-app.post('/api/grading-mode', (req, res) => {
+app.post('/api/grading-mode', async (req, res) => {
   const { mode } = req.body || {};
   if (mode !== 'ai' && mode !== 'teacher') return res.status(400).json({ error: 'invalid' });
-  withDb(db => {
-    db.gradingMode = mode;
-    saveDb(db);
-    return db.gradingMode;
-  })
-    .then(savedMode => res.json({ mode: savedMode }))
-    .catch(() => res.status(500).json({ error: 'server-error' }));
-});
-// ---------- Admin: kirish va login/parolni o'zgartirish ----------
-app.post('/api/admin/login', (req, res) => {
-  const { username, password } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: 'invalid' });
-  withDb(db => {
-    if (username.trim().toLowerCase() !== db.adminUsername.toLowerCase()) return { error: 'invalid-username' };
-    if (password !== db.adminPassword) return { error: 'invalid-password' };
-    return { ok: true, username: db.adminUsername };
-  })
-    .then(result => {
-      if (result.error === 'invalid-username') return res.status(404).json({ error: 'invalid-username' });
-      if (result.error === 'invalid-password') return res.status(401).json({ error: 'invalid-password' });
-      res.json(result);
-    })
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+  try {
+    const settings = await updateSettings({ gradingMode: mode });
+    res.json({ mode: settings.gradingMode });
+  } catch (err) {
+    console.error('POST /api/grading-mode error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
 
-app.post('/api/admin/credentials', (req, res) => {
+// ---------- Admin: kirish va login/parolni o'zgartirish ----------
+app.post('/api/admin/login', async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'invalid' });
+  try {
+    const settings = await getSettings();
+    if (username.trim().toLowerCase() !== settings.adminUsername.toLowerCase()) return res.status(404).json({ error: 'invalid-username' });
+    if (password !== settings.adminPassword) return res.status(401).json({ error: 'invalid-password' });
+    res.json({ ok: true, username: settings.adminUsername });
+  } catch (err) {
+    console.error('POST /api/admin/login error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
+});
+
+app.post('/api/admin/credentials', async (req, res) => {
   const { currentPassword, newUsername, newPassword } = req.body || {};
   if (!currentPassword) return res.status(400).json({ error: 'invalid' });
-  withDb(db => {
-    if (currentPassword !== db.adminPassword) return { error: 'invalid-password' };
+  try {
+    const settings = await getSettings();
+    if (currentPassword !== settings.adminPassword) return res.status(401).json({ error: 'invalid-password' });
+    const patch = {};
     const trimmedUsername = (newUsername || '').trim();
     if (trimmedUsername) {
-      const conflict = db.students.some(student => student.fullName.toLowerCase() === trimmedUsername.toLowerCase());
-      if (conflict) return { error: 'duplicate-username' };
-      db.adminUsername = trimmedUsername;
+      const students = await db.getStudents();
+      const conflict = students.some(student => student.fullName.toLowerCase() === trimmedUsername.toLowerCase());
+      if (conflict) return res.status(409).json({ error: 'duplicate-username' });
+      patch.adminUsername = trimmedUsername;
     }
     const trimmedPassword = (newPassword || '').trim();
     if (trimmedPassword) {
-      if (trimmedPassword.length < 4) return { error: 'password-too-short' };
-      db.adminPassword = trimmedPassword;
+      if (trimmedPassword.length < 4) return res.status(400).json({ error: 'password-too-short' });
+      patch.adminPassword = trimmedPassword;
     }
-    saveDb(db);
-    return { ok: true, username: db.adminUsername };
-  })
-    .then(result => {
-      if (result.error === 'invalid-password') return res.status(401).json({ error: 'invalid-password' });
-      if (result.error === 'duplicate-username') return res.status(409).json({ error: 'duplicate-username' });
-      if (result.error === 'password-too-short') return res.status(400).json({ error: 'password-too-short' });
-      res.json(result);
-    })
-    .catch(() => res.status(500).json({ error: 'server-error' }));
+    const updated = await updateSettings(patch);
+    res.json({ ok: true, username: updated.adminUsername });
+  } catch (err) {
+    console.error('POST /api/admin/credentials error:', err.message);
+    res.status(500).json({ error: 'server-error' });
+  }
 });
-// ================= /UMUMIY MA'LUMOTLAR BAZASI =================
 
 // ---------- Yozish (Writing) baholash ----------
 app.post('/api/grade-writing', async (req, res) => {
@@ -599,6 +548,6 @@ Faqat quyidagi JSON formatida javob bering, boshqa hech narsa yozmang:
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server ishga tushdi: http://localhost:${PORT}`);
+  console.log('Ma\u2019lumotlar endi Supabase\u2019da saqlanadi (SUPABASE_URL / SUPABASE_SECRET_KEY orqali).');
   console.log('Maktabdagi boshqa kompyuterlar shu tarmoqdagi IP orqali ulanadi, masalan: http://192.168.1.XX:' + PORT);
-  console.log('Kompyuteringizning tarmoq IP manzilini bilish uchun: Windows -> ipconfig, Mac/Linux -> ifconfig');
 });
